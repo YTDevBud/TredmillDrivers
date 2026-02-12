@@ -29,7 +29,7 @@ cl.exe /nologo /LD /O2 /std:c++17 /EHsc /MT ^
     /Fe:"%OUT%\treadmill_layer.dll" ^
     /Fo:"%OUT%\treadmill_layer.obj" ^
     /link /DEF:"%DEF%" /OUT:"%OUT%\treadmill_layer.dll" ^
-    kernel32.lib
+    kernel32.lib shell32.lib
 
 if %ERRORLEVEL% NEQ 0 (
     echo.

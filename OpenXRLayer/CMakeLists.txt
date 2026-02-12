@@ -12,8 +12,8 @@ add_library(treadmill_layer SHARED treadmill_layer.cpp)
 # Export the negotiation entry point
 target_compile_definitions(treadmill_layer PRIVATE WIN32_LEAN_AND_MEAN)
 
-# No external libraries needed — only Windows API (kernel32)
-target_link_libraries(treadmill_layer PRIVATE kernel32)
+# Windows API libs
+target_link_libraries(treadmill_layer PRIVATE kernel32 shell32)
 
 # Output name without "lib" prefix
 set_target_properties(treadmill_layer PROPERTIES

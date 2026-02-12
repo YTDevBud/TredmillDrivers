@@ -4,57 +4,107 @@
 // Intercepts OpenXR input calls and injects treadmill velocity
 // into the left thumbstick Y axis. Reads velocity from a named
 // memory-mapped file written by the WPF companion app.
+//
+// Pure C + Win32 — no STL, no static constructors.
 // ═══════════════════════════════════════════════════════════════════
 
 #include "openxr_defs.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <shlobj.h>
+#include <stdio.h>
 #include <string.h>
-#include <mutex>
-#include <unordered_set>
 
 // ─── Layer Identity ─────────────────────────────────────────────
 
 #define LAYER_NAME "XR_APILAYER_TREADMILL_driver"
 
+// ─── Debug Log ──────────────────────────────────────────────────
+
+static HANDLE g_logFile = INVALID_HANDLE_VALUE;
+
+static void LogOpen()
+{
+    if (g_logFile != INVALID_HANDLE_VALUE) return;
+
+    char path[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, path))) {
+        strcat_s(path, "\\TreadmillDriver\\OpenXRLayer\\layer_log.txt");
+        g_logFile = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ,
+                                NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    }
+}
+
+static void Log(const char* msg)
+{
+    if (g_logFile == INVALID_HANDLE_VALUE) return;
+    DWORD written;
+    WriteFile(g_logFile, msg, (DWORD)strlen(msg), &written, NULL);
+    WriteFile(g_logFile, "\r\n", 2, &written, NULL);
+    FlushFileBuffers(g_logFile);
+}
+
+static void LogClose()
+{
+    if (g_logFile != INVALID_HANDLE_VALUE) {
+        CloseHandle(g_logFile);
+        g_logFile = INVALID_HANDLE_VALUE;
+    }
+}
+
 // ─── Shared Memory Protocol ────────────────────────────────────
-// Must match the layout in TreadmillDriver/Services/SharedMemoryService.cs
 
 #define SHARED_MEM_NAME     "TreadmillDriverVelocity"
 #define SHARED_MEM_RETRY_MS 2000
 
 #pragma pack(push, 1)
 struct TreadmillSharedData {
-    float       velocity;       // -1.0 to 1.0, normalised
-    uint32_t    active;         // nonzero = WPF app is running
+    float       velocity;
+    uint32_t    active;
 };
 #pragma pack(pop)
 
-// ─── Global State ───────────────────────────────────────────────
+// ─── Action Tracking (fixed-size, no STL) ───────────────────────
+
+#define MAX_TRACKED_ACTIONS 64
+
+struct TrackedActions {
+    uintptr_t   vec2f[MAX_TRACKED_ACTIONS];
+    int         vec2fCount;
+    uintptr_t   floatY[MAX_TRACKED_ACTIONS];
+    int         floatYCount;
+    BOOL        bindingsReceived;
+};
+
+// ─── Global State (all POD — no static constructors) ────────────
 
 static XrInstance                   g_instance                          = XR_NULL_HANDLE;
-static PFN_xrGetInstanceProcAddr    g_nextGetInstanceProcAddr           = nullptr;
+static PFN_xrGetInstanceProcAddr    g_nextGetInstanceProcAddr           = NULL;
 
-// Chained function pointers (next layer / runtime)
-static PFN_xrDestroyInstance                        g_xrDestroyInstance                     = nullptr;
-static PFN_xrPathToString                           g_xrPathToString                        = nullptr;
-static PFN_xrSuggestInteractionProfileBindings      g_xrSuggestInteractionProfileBindings   = nullptr;
-static PFN_xrGetActionStateFloat                    g_xrGetActionStateFloat                 = nullptr;
-static PFN_xrGetActionStateVector2f                 g_xrGetActionStateVector2f              = nullptr;
+static PFN_xrDestroyInstance                        g_xrDestroyInstance                     = NULL;
+static PFN_xrPathToString                           g_xrPathToString                        = NULL;
+static PFN_xrSuggestInteractionProfileBindings      g_xrSuggestInteractionProfileBindings   = NULL;
+static PFN_xrGetActionStateFloat                    g_xrGetActionStateFloat                 = NULL;
+static PFN_xrGetActionStateVector2f                 g_xrGetActionStateVector2f              = NULL;
 
-// Action tracking — which actions are left thumbstick?
-static std::mutex                       g_actionMutex;
-static std::unordered_set<uintptr_t>    g_leftThumbstickVector2fActions;
-static std::unordered_set<uintptr_t>    g_leftThumbstickYFloatActions;
-static bool                             g_bindingsReceived = false;
+static CRITICAL_SECTION     g_cs;
+static BOOL                 g_csInitialized = FALSE;
+static TrackedActions       g_tracked       = {};
 
-// Shared memory
-static HANDLE                   g_sharedMemHandle       = NULL;
-static TreadmillSharedData*     g_sharedData            = nullptr;
-static ULONGLONG                g_lastSharedMemAttempt   = 0;
+static HANDLE               g_sharedMemHandle       = NULL;
+static TreadmillSharedData* g_sharedData            = NULL;
+static ULONGLONG            g_lastSharedMemAttempt   = 0;
 
-// ─── Shared Memory Helpers ──────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────
+
+static void EnsureCritSec()
+{
+    if (!g_csInitialized) {
+        InitializeCriticalSection(&g_cs);
+        g_csInitialized = TRUE;
+    }
+}
 
 static void OpenSharedMemory()
 {
@@ -64,24 +114,20 @@ static void OpenSharedMemory()
     if (g_sharedMemHandle) {
         g_sharedData = (TreadmillSharedData*)MapViewOfFile(
             g_sharedMemHandle, FILE_MAP_READ, 0, 0, sizeof(TreadmillSharedData));
+        Log(g_sharedData ? "SharedMem: mapped OK" : "SharedMem: MapViewOfFile failed");
+    } else {
+        Log("SharedMem: not available (WPF app not running?)");
     }
 }
 
 static void CloseSharedMemory()
 {
-    if (g_sharedData) {
-        UnmapViewOfFile(g_sharedData);
-        g_sharedData = nullptr;
-    }
-    if (g_sharedMemHandle) {
-        CloseHandle(g_sharedMemHandle);
-        g_sharedMemHandle = NULL;
-    }
+    if (g_sharedData)    { UnmapViewOfFile(g_sharedData); g_sharedData = NULL; }
+    if (g_sharedMemHandle) { CloseHandle(g_sharedMemHandle); g_sharedMemHandle = NULL; }
 }
 
 static float ReadTreadmillVelocity()
 {
-    // Lazy connect / reconnect with cooldown
     if (!g_sharedData) {
         ULONGLONG now = GetTickCount64();
         if (now - g_lastSharedMemAttempt >= SHARED_MEM_RETRY_MS) {
@@ -89,28 +135,50 @@ static float ReadTreadmillVelocity()
             OpenSharedMemory();
         }
     }
-
     if (g_sharedData && g_sharedData->active) {
         return g_sharedData->velocity;
     }
     return 0.0f;
 }
 
+static BOOL ContainsAction(const uintptr_t* arr, int count, uintptr_t key)
+{
+    for (int i = 0; i < count; i++) {
+        if (arr[i] == key) return TRUE;
+    }
+    return FALSE;
+}
+
+static void AddAction(uintptr_t* arr, int* count, uintptr_t key)
+{
+    if (*count >= MAX_TRACKED_ACTIONS) return;
+    if (!ContainsAction(arr, *count, key)) {
+        arr[*count] = key;
+        (*count)++;
+    }
+}
+
 // ─── Intercepted: xrSuggestInteractionProfileBindings ───────────
-// Scans binding suggestions to identify which actions are bound
-// to the left hand thumbstick so we only inject into those.
 
 static XrResult XRAPI_CALL
 TreadmillLayer_xrSuggestInteractionProfileBindings(
     XrInstance instance,
     const XrInteractionProfileSuggestedBinding* suggestedBindings)
 {
+    Log("xrSuggestInteractionProfileBindings called");
+
     XrResult result = g_xrSuggestInteractionProfileBindings(instance, suggestedBindings);
-    if (XR_FAILED(result)) return result;
+    if (XR_FAILED(result)) {
+        Log("  -> chained call FAILED");
+        return result;
+    }
 
-    if (!g_xrPathToString) return result;
+    if (!g_xrPathToString) {
+        Log("  -> no xrPathToString, skipping binding scan");
+        return result;
+    }
 
-    std::lock_guard<std::mutex> lock(g_actionMutex);
+    EnterCriticalSection(&g_cs);
 
     for (uint32_t i = 0; i < suggestedBindings->countSuggestedBindings; i++) {
         char pathStr[256] = {0};
@@ -122,23 +190,26 @@ TreadmillLayer_xrSuggestInteractionProfileBindings(
 
         if (XR_FAILED(pr) || pathLen == 0) continue;
 
-        bool isLeft       = strstr(pathStr, "/user/hand/left") != nullptr;
-        bool isThumbstick = strstr(pathStr, "thumbstick")      != nullptr;
+        BOOL isLeft       = strstr(pathStr, "/user/hand/left") != NULL;
+        BOOL isThumbstick = strstr(pathStr, "thumbstick")      != NULL;
 
         if (isLeft && isThumbstick) {
             uintptr_t key = (uintptr_t)suggestedBindings->suggestedBindings[i].action;
 
+            char logBuf[320];
+            sprintf_s(logBuf, "  Tracked binding: %s (action=%p)", pathStr, (void*)key);
+            Log(logBuf);
+
             if (strstr(pathStr, "thumbstick/y")) {
-                // Float Y-axis variant
-                g_leftThumbstickYFloatActions.insert(key);
+                AddAction(g_tracked.floatY, &g_tracked.floatYCount, key);
             } else if (!strstr(pathStr, "thumbstick/x")) {
-                // Full 2D thumbstick (not X-only)
-                g_leftThumbstickVector2fActions.insert(key);
+                AddAction(g_tracked.vec2f, &g_tracked.vec2fCount, key);
             }
-            g_bindingsReceived = true;
+            g_tracked.bindingsReceived = TRUE;
         }
     }
 
+    LeaveCriticalSection(&g_cs);
     return result;
 }
 
@@ -156,24 +227,20 @@ TreadmillLayer_xrGetActionStateVector2f(
     float velocity = ReadTreadmillVelocity();
     if (velocity == 0.0f) return result;
 
-    bool shouldInject = false;
+    BOOL shouldInject = FALSE;
+    EnterCriticalSection(&g_cs);
     {
-        std::lock_guard<std::mutex> lock(g_actionMutex);
         uintptr_t key = (uintptr_t)getInfo->action;
-
-        if (g_leftThumbstickVector2fActions.count(key) > 0) {
-            // Exact match — we know this is left thumbstick
-            shouldInject = true;
-        }
-        else if (!g_bindingsReceived) {
-            // Fallback: no bindings detected yet, inject into all vector2f
-            shouldInject = true;
+        if (ContainsAction(g_tracked.vec2f, g_tracked.vec2fCount, key)) {
+            shouldInject = TRUE;
+        } else if (!g_tracked.bindingsReceived) {
+            shouldInject = TRUE;   // fallback: inject all
         }
     }
+    LeaveCriticalSection(&g_cs);
 
     if (shouldInject) {
         state->currentState.y += velocity;
-        // Clamp
         if (state->currentState.y >  1.0f) state->currentState.y =  1.0f;
         if (state->currentState.y < -1.0f) state->currentState.y = -1.0f;
         state->isActive = XR_TRUE;
@@ -197,12 +264,13 @@ TreadmillLayer_xrGetActionStateFloat(
     float velocity = ReadTreadmillVelocity();
     if (velocity == 0.0f) return result;
 
-    bool shouldInject = false;
+    BOOL shouldInject = FALSE;
+    EnterCriticalSection(&g_cs);
     {
-        std::lock_guard<std::mutex> lock(g_actionMutex);
         uintptr_t key = (uintptr_t)getInfo->action;
-        shouldInject = g_leftThumbstickYFloatActions.count(key) > 0;
+        shouldInject = ContainsAction(g_tracked.floatY, g_tracked.floatYCount, key);
     }
+    LeaveCriticalSection(&g_cs);
 
     if (shouldInject) {
         state->currentState += velocity;
@@ -220,15 +288,17 @@ TreadmillLayer_xrGetActionStateFloat(
 static XrResult XRAPI_CALL
 TreadmillLayer_xrDestroyInstance(XrInstance instance)
 {
+    Log("xrDestroyInstance");
     CloseSharedMemory();
-    {
-        std::lock_guard<std::mutex> lock(g_actionMutex);
-        g_leftThumbstickVector2fActions.clear();
-        g_leftThumbstickYFloatActions.clear();
-        g_bindingsReceived = false;
-    }
+
+    EnterCriticalSection(&g_cs);
+    memset(&g_tracked, 0, sizeof(g_tracked));
+    LeaveCriticalSection(&g_cs);
+
     g_instance = XR_NULL_HANDLE;
-    return g_xrDestroyInstance(instance);
+    XrResult r = g_xrDestroyInstance(instance);
+    LogClose();
+    return r;
 }
 
 // ─── GetInstanceProcAddr (layer dispatch) ───────────────────────
@@ -260,7 +330,6 @@ TreadmillLayer_xrGetInstanceProcAddr(
         return XR_SUCCESS;
     }
 
-    // Everything else → chain to next
     return g_nextGetInstanceProcAddr(instance, name, function);
 }
 
@@ -272,25 +341,43 @@ TreadmillLayer_xrCreateApiLayerInstance(
     const XrApiLayerCreateInfo* layerInfo,
     XrInstance* instance)
 {
+    Log("xrCreateApiLayerInstance entered");
+
     // Grab next pointers from chain
     XrApiLayerNextInfo* nextInfo = layerInfo->nextInfo;
+    if (!nextInfo) {
+        Log("  ERROR: nextInfo is NULL");
+        return XR_ERROR_INITIALIZATION_FAILED;
+    }
+
     PFN_xrGetInstanceProcAddr       nextGIPA    = nextInfo->nextGetInstanceProcAddr;
     PFN_xrCreateApiLayerInstance    nextCreate  = nextInfo->nextCreateApiLayerInstance;
+
+    if (!nextGIPA || !nextCreate) {
+        Log("  ERROR: next function pointers are NULL");
+        return XR_ERROR_INITIALIZATION_FAILED;
+    }
 
     // Build modified layer info for the next layer
     XrApiLayerCreateInfo nextLayerInfo = *layerInfo;
     nextLayerInfo.nextInfo = nextInfo->next;
 
-    // Chain instance creation to next layer / runtime
+    Log("  Chaining to next layer/runtime...");
     XrResult result = nextCreate(info, &nextLayerInfo, instance);
-    if (XR_FAILED(result)) return result;
+    if (XR_FAILED(result)) {
+        char buf[64];
+        sprintf_s(buf, "  Chain returned error: %d", (int)result);
+        Log(buf);
+        return result;
+    }
 
-    // Save instance and next-layer getInstanceProcAddr
+    Log("  Instance created successfully");
+
     g_instance               = *instance;
     g_nextGetInstanceProcAddr = nextGIPA;
 
     // Resolve chained function pointers
-    PFN_xrVoidFunction pfn = nullptr;
+    PFN_xrVoidFunction pfn = NULL;
 
     g_nextGetInstanceProcAddr(*instance, "xrDestroyInstance", &pfn);
     g_xrDestroyInstance = (PFN_xrDestroyInstance)pfn;
@@ -307,9 +394,11 @@ TreadmillLayer_xrCreateApiLayerInstance(
     g_nextGetInstanceProcAddr(*instance, "xrGetActionStateFloat", &pfn);
     g_xrGetActionStateFloat = (PFN_xrGetActionStateFloat)pfn;
 
-    // Attempt to open shared memory (may not exist yet)
+    Log("  Function pointers resolved");
+
     OpenSharedMemory();
 
+    Log("  Layer initialization complete");
     return XR_SUCCESS;
 }
 
@@ -321,20 +410,60 @@ xrNegotiateLoaderApiLayerInterface(
     const char*                      layerName,
     XrNegotiateApiLayerRequest*      apiLayerRequest)
 {
-    if (!loaderInfo || !layerName || !apiLayerRequest)
-        return XR_ERROR_INITIALIZATION_FAILED;
+    LogOpen();
+    Log("=== Treadmill OpenXR Layer loaded ===");
 
-    if (loaderInfo->structType != XR_LOADER_INTERFACE_STRUCT_LOADER_INFO)
+    if (!loaderInfo || !layerName || !apiLayerRequest) {
+        Log("ERROR: null parameter");
         return XR_ERROR_INITIALIZATION_FAILED;
+    }
 
-    // We implement interface version 1
-    if (loaderInfo->minInterfaceVersion > 1 || loaderInfo->maxInterfaceVersion < 1)
+    char buf[384];
+    sprintf_s(buf, "Loader info: structType=%d minIface=%u maxIface=%u",
+              (int)loaderInfo->structType,
+              loaderInfo->minInterfaceVersion,
+              loaderInfo->maxInterfaceVersion);
+    Log(buf);
+
+    if (loaderInfo->structType != XR_LOADER_INTERFACE_STRUCT_LOADER_INFO) {
+        Log("ERROR: wrong structType");
         return XR_ERROR_INITIALIZATION_FAILED;
+    }
+
+    if (loaderInfo->minInterfaceVersion > 1 || loaderInfo->maxInterfaceVersion < 1) {
+        Log("ERROR: interface version mismatch");
+        return XR_ERROR_INITIALIZATION_FAILED;
+    }
+
+    EnsureCritSec();
 
     apiLayerRequest->layerInterfaceVersion  = 1;
     apiLayerRequest->layerApiVersion        = XR_CURRENT_API_VERSION;
     apiLayerRequest->getInstanceProcAddr    = TreadmillLayer_xrGetInstanceProcAddr;
     apiLayerRequest->createApiLayerInstance = TreadmillLayer_xrCreateApiLayerInstance;
 
+    sprintf_s(buf, "Negotiation OK for layer '%s'", layerName);
+    Log(buf);
+
     return XR_SUCCESS;
+}
+
+// ─── DllMain (minimal — just ensure we don't do anything unsafe) ─
+
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved)
+{
+    (void)hModule; (void)lpReserved;
+    switch (reason) {
+    case DLL_PROCESS_ATTACH:
+        DisableThreadLibraryCalls(hModule);
+        break;
+    case DLL_PROCESS_DETACH:
+        if (g_csInitialized) {
+            DeleteCriticalSection(&g_cs);
+            g_csInitialized = FALSE;
+        }
+        LogClose();
+        break;
+    }
+    return TRUE;
 }
