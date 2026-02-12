@@ -84,9 +84,12 @@ static PFN_xrGetInstanceProcAddr    g_nextGetInstanceProcAddr           = NULL;
 
 static PFN_xrDestroyInstance                        g_xrDestroyInstance                     = NULL;
 static PFN_xrPathToString                           g_xrPathToString                        = NULL;
+static PFN_xrStringToPath                           g_xrStringToPath                        = NULL;
 static PFN_xrSuggestInteractionProfileBindings      g_xrSuggestInteractionProfileBindings   = NULL;
 static PFN_xrGetActionStateFloat                    g_xrGetActionStateFloat                 = NULL;
 static PFN_xrGetActionStateVector2f                 g_xrGetActionStateVector2f              = NULL;
+
+static XrPath                                       g_leftHandPath                          = XR_NULL_PATH;
 
 static CRITICAL_SECTION     g_cs;
 static BOOL                 g_csInitialized = FALSE;
@@ -224,6 +227,10 @@ TreadmillLayer_xrGetActionStateVector2f(
     XrResult result = g_xrGetActionStateVector2f(session, getInfo, state);
     if (XR_FAILED(result)) return result;
 
+    // Only inject on left hand subaction (or XR_NULL_PATH which means "any")
+    if (getInfo->subactionPath != XR_NULL_PATH && getInfo->subactionPath != g_leftHandPath)
+        return result;
+
     float velocity = ReadTreadmillVelocity();
     if (velocity == 0.0f) return result;
 
@@ -234,7 +241,7 @@ TreadmillLayer_xrGetActionStateVector2f(
         if (ContainsAction(g_tracked.vec2f, g_tracked.vec2fCount, key)) {
             shouldInject = TRUE;
         } else if (!g_tracked.bindingsReceived) {
-            shouldInject = TRUE;   // fallback: inject all
+            shouldInject = TRUE;   // fallback: inject all left-hand
         }
     }
     LeaveCriticalSection(&g_cs);
@@ -260,6 +267,10 @@ TreadmillLayer_xrGetActionStateFloat(
 {
     XrResult result = g_xrGetActionStateFloat(session, getInfo, state);
     if (XR_FAILED(result)) return result;
+
+    // Only inject on left hand subaction (or XR_NULL_PATH which means "any")
+    if (getInfo->subactionPath != XR_NULL_PATH && getInfo->subactionPath != g_leftHandPath)
+        return result;
 
     float velocity = ReadTreadmillVelocity();
     if (velocity == 0.0f) return result;
@@ -384,6 +395,17 @@ TreadmillLayer_xrCreateApiLayerInstance(
 
     g_nextGetInstanceProcAddr(*instance, "xrPathToString", &pfn);
     g_xrPathToString = (PFN_xrPathToString)pfn;
+
+    g_nextGetInstanceProcAddr(*instance, "xrStringToPath", &pfn);
+    g_xrStringToPath = (PFN_xrStringToPath)pfn;
+
+    // Resolve left hand path for subaction filtering
+    if (g_xrStringToPath) {
+        g_xrStringToPath(*instance, "/user/hand/left", &g_leftHandPath);
+        char buf[64];
+        sprintf_s(buf, "  Left hand path resolved: %llu", (unsigned long long)g_leftHandPath);
+        Log(buf);
+    }
 
     g_nextGetInstanceProcAddr(*instance, "xrSuggestInteractionProfileBindings", &pfn);
     g_xrSuggestInteractionProfileBindings = (PFN_xrSuggestInteractionProfileBindings)pfn;

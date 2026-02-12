@@ -146,6 +146,9 @@ typedef XrResult(XRAPI_PTR* PFN_xrPathToString)(
     XrInstance instance, XrPath path,
     uint32_t bufferCapacityInput, uint32_t* bufferCountOutput, char* buffer);
 
+typedef XrResult(XRAPI_PTR* PFN_xrStringToPath)(
+    XrInstance instance, const char* pathString, XrPath* path);
+
 typedef XrResult(XRAPI_PTR* PFN_xrSuggestInteractionProfileBindings)(
     XrInstance instance,
     const XrInteractionProfileSuggestedBinding* suggestedBindings);
