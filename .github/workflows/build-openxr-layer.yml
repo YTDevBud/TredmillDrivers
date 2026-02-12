@@ -32,7 +32,7 @@ jobs:
               /Fe:"bin\treadmill_layer.dll" ^
               /Fo:"bin\treadmill_layer.obj" ^
               /link /DEF:"treadmill_layer.def" /OUT:"bin\treadmill_layer.dll" ^
-              kernel32.lib
+              kernel32.lib shell32.lib
           if %ERRORLEVEL% NEQ 0 exit /b 1
           echo Build succeeded
 
