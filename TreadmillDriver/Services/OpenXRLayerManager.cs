@@ -91,13 +91,14 @@ public class OpenXRLayerManager
             // Copy DLL
             File.Copy(SourceDllPath, _installedDllPath, overwrite: true);
 
-            // Write JSON manifest (library_path is relative to manifest)
-            var json = """
+            // Write JSON manifest (library_path must be absolute for OpenXR loader compatibility)
+            var dllAbsolutePath = _installedDllPath.Replace('\\', '/');
+            var json = $$"""
             {
                 "file_format_version": "1.0.0",
                 "api_layer": {
                     "name": "XR_APILAYER_TREADMILL_driver",
-                    "library_path": "treadmill_layer.dll",
+                    "library_path": "{{dllAbsolutePath}}",
                     "api_version": "1.0.0",
                     "implementation_version": "1",
                     "description": "Treadmill Driver - Injects treadmill velocity into VR left thumbstick",
@@ -105,7 +106,7 @@ public class OpenXRLayerManager
                 }
             }
             """;
-            File.WriteAllText(_installedJsonPath, json);
+            File.WriteAllText(_installedJsonPath, json, new System.Text.UTF8Encoding(false));
 
             // Register as an implicit API layer (HKCU — no admin needed)
             using var key = Registry.CurrentUser.CreateSubKey(RegistryPath);
