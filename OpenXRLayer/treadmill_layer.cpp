@@ -5,7 +5,7 @@
 // into the left thumbstick Y axis. Reads velocity from a named
 // memory-mapped file written by the WPF companion app.
 //
-// Pure C + Win32 — no STL, no static constructors. v2
+// Pure C + Win32 — no STL, no static constructors. v3
 // ═══════════════════════════════════════════════════════════════════
 
 #include "openxr_defs.h"
