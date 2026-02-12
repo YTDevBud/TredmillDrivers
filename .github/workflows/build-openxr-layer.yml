@@ -1,0 +1,51 @@
+name: Build OpenXR Layer DLL
+
+on:
+  push:
+    paths:
+      - 'OpenXRLayer/**'
+  pull_request:
+    paths:
+      - 'OpenXRLayer/**'
+  workflow_dispatch:   # allows manual trigger from GitHub UI
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Build treadmill_layer.dll
+        shell: cmd
+        working-directory: OpenXRLayer
+        run: |
+          if not exist bin mkdir bin
+          cl.exe /nologo /LD /O2 /std:c++17 /EHsc /MT ^
+              /I"." ^
+              treadmill_layer.cpp ^
+              /Fe:"bin\treadmill_layer.dll" ^
+              /Fo:"bin\treadmill_layer.obj" ^
+              /link /DEF:"treadmill_layer.def" /OUT:"bin\treadmill_layer.dll" ^
+              kernel32.lib
+          if %ERRORLEVEL% NEQ 0 exit /b 1
+          echo Build succeeded
+
+      - name: Copy manifest
+        shell: cmd
+        working-directory: OpenXRLayer
+        run: copy treadmill_layer.json bin\treadmill_layer.json
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: treadmill-openxr-layer
+          path: |
+            OpenXRLayer/bin/treadmill_layer.dll
+            OpenXRLayer/bin/treadmill_layer.json
+          if-no-files-found: error

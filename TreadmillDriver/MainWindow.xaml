@@ -1,0 +1,460 @@
+<Window x:Class="TreadmillDriver.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:conv="clr-namespace:TreadmillDriver.Converters"
+        Title="Treadmill Driver"
+        Width="720" Height="860"
+        MinWidth="680" MinHeight="700"
+        WindowStartupLocation="CenterScreen"
+        WindowStyle="None"
+        Background="{StaticResource MantelBgBrush}"
+        ResizeMode="CanResize"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing">
+
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="42"
+                      ResizeBorderThickness="6"
+                      GlassFrameThickness="0"
+                      CornerRadius="0"/>
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <conv:BoolToVisibilityConverter x:Key="BoolToVis"/>
+        <conv:BoolToStatusColorConverter x:Key="BoolToStatusColor"/>
+        <conv:BoolToCardHighlightConverter x:Key="BoolToCardHighlight"/>
+        <conv:VelocityToColorConverter x:Key="VelocityToColor"/>
+        <conv:StringToVisibilityConverter x:Key="StringToVis"/>
+    </Window.Resources>
+
+    <Border Background="{StaticResource MantelBgBrush}"
+            BorderBrush="#2A2A38" BorderThickness="1">
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="*"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <!-- ═══ CUSTOM TITLE BAR ═══ -->
+            <Border Grid.Row="0" Background="{StaticResource BaseBgBrush}">
+                <Grid Height="42">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- App icon + title -->
+                    <StackPanel Grid.Column="0" Orientation="Horizontal" Margin="14,0,0,0"
+                                VerticalAlignment="Center">
+                        <Image Source="/Icons/Mouse.png" Width="18" Height="18" Margin="0,0,10,0"
+                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                        <TextBlock Text="Treadmill Driver" FontSize="13" FontWeight="SemiBold"
+                                   Foreground="{StaticResource TextBrush}" VerticalAlignment="Center"/>
+                        <TextBlock Text="v1.0" FontSize="10" Foreground="{StaticResource Overlay0Brush}"
+                                   VerticalAlignment="Center" Margin="8,1,0,0"/>
+                    </StackPanel>
+
+                    <!-- Window control buttons -->
+                    <StackPanel Grid.Column="1" Orientation="Horizontal">
+                        <Button Content="—" Style="{StaticResource TitleBarButton}"
+                                Click="MinimizeButton_Click"
+                                WindowChrome.IsHitTestVisibleInChrome="True"/>
+                        <Button x:Name="MaxRestoreButton" Content="□"
+                                Style="{StaticResource TitleBarButton}"
+                                Click="MaximizeRestoreButton_Click"
+                                WindowChrome.IsHitTestVisibleInChrome="True"/>
+                        <Button Content="✕" Style="{StaticResource TitleBarCloseButton}"
+                                Click="CloseButton_Click" Foreground="{StaticResource SubTextBrush}"
+                                WindowChrome.IsHitTestVisibleInChrome="True"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ═══ MAIN CONTENT ═══ -->
+            <ScrollViewer Grid.Row="1" Style="{StaticResource ModernScrollViewer}"
+                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Margin="24,12,24,24">
+
+                    <!-- ═══ DEVICE CONNECTION SECTION ═══ -->
+                    <Border Style="{StaticResource CardBorder}">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                <Image Source="/Icons/Mouse.png" Width="20" Height="20" Margin="0,0,8,0"
+                                       RenderOptions.BitmapScalingMode="HighQuality"/>
+                                <TextBlock Text="DEVICE CONNECTION" Style="{StaticResource SectionHeader}"
+                                           Margin="0"/>
+                            </StackPanel>
+
+                            <TextBlock Text="Select the Bluetooth mouse attached to your treadmill:"
+                                       Foreground="{StaticResource SubTextBrush}" FontSize="12"
+                                       Margin="0,0,0,10"/>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <ComboBox Grid.Column="0" Style="{StaticResource ModernComboBox}"
+                                          ItemsSource="{Binding Devices}"
+                                          SelectedItem="{Binding SelectedDevice}"
+                                          Margin="0,0,8,0"/>
+
+                                <Button Grid.Column="1" Content="⟳ Refresh"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Command="{Binding RefreshDevicesCommand}"
+                                        Foreground="{StaticResource TextBrush}"
+                                        Padding="14,8"/>
+                            </Grid>
+
+                            <!-- Connect button with integrated status dot -->
+                            <Grid Margin="0,14,0,0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <Button Grid.Column="0" Command="{Binding ConnectCommand}" MinWidth="130">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource ModernButton}">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsConnected}" Value="True">
+                                                    <Setter Property="Background" Value="{StaticResource RedBrush}"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Ellipse Width="8" Height="8" Margin="0,0,8,0">
+                                            <Ellipse.Fill>
+                                                <Binding Path="IsConnected" Converter="{StaticResource BoolToStatusColor}"/>
+                                            </Ellipse.Fill>
+                                        </Ellipse>
+                                        <TextBlock Text="{Binding ConnectButtonText}" Foreground="White"/>
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+
+                            <!-- Block cursor toggle -->
+                            <CheckBox Style="{StaticResource ModernCheckBox}"
+                                      Content="Block mouse cursor (prevents treadmill mouse from moving desktop cursor)"
+                                      IsChecked="{Binding BlockCursor, Mode=TwoWay}"
+                                      Margin="0,14,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ═══ OUTPUT MODE SECTION ═══ -->
+                    <Border Style="{StaticResource CardBorder}">
+                        <StackPanel>
+                            <TextBlock Text="OUTPUT MODE" Style="{StaticResource SectionHeader}"/>
+                            <TextBlock Text="Choose how treadmill movement is translated:"
+                                       Foreground="{StaticResource SubTextBrush}" FontSize="12"
+                                       Margin="0,0,0,14"/>
+
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                <!-- Keyboard Card -->
+                                <Border Style="{StaticResource OutputModeCard}"
+                                        Background="{Binding IsKeyboardMode, Converter={StaticResource BoolToCardHighlight}}"
+                                        MouseLeftButtonUp="KeyboardMode_Click">
+                                    <StackPanel HorizontalAlignment="Center">
+                                        <TextBlock Text="⌨" FontSize="40" HorizontalAlignment="Center"
+                                                   Foreground="{StaticResource TextBrush}" Margin="0,0,0,6"/>
+                                        <TextBlock Text="Keyboard" FontSize="14" FontWeight="SemiBold"
+                                                   HorizontalAlignment="Center"
+                                                   Foreground="{StaticResource TextBrush}"/>
+                                        <TextBlock Text="W / S Keys" FontSize="11"
+                                                   HorizontalAlignment="Center"
+                                                   Foreground="{StaticResource SubTextBrush}"
+                                                   Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- Xbox Controller Card -->
+                                <Border Style="{StaticResource OutputModeCard}"
+                                        Background="{Binding IsXboxMode, Converter={StaticResource BoolToCardHighlight}}"
+                                        MouseLeftButtonUp="XboxMode_Click">
+                                    <StackPanel HorizontalAlignment="Center">
+                                        <Image Source="/Icons/Controller.png" Width="44" Height="44"
+                                               HorizontalAlignment="Center" Margin="0,0,0,6"
+                                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                                        <TextBlock Text="Xbox" FontSize="14" FontWeight="SemiBold"
+                                                   HorizontalAlignment="Center"
+                                                   Foreground="{StaticResource TextBrush}"/>
+                                        <TextBlock Text="Left Stick Y" FontSize="11"
+                                                   HorizontalAlignment="Center"
+                                                   Foreground="{StaticResource SubTextBrush}"
+                                                   Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- VR Controller Card -->
+                                <Border Style="{StaticResource OutputModeCard}"
+                                        Background="{Binding IsVRMode, Converter={StaticResource BoolToCardHighlight}}"
+                                        MouseLeftButtonUp="VRMode_Click">
+                                    <StackPanel HorizontalAlignment="Center">
+                                        <Image Source="/Icons/VR.png" Width="44" Height="44"
+                                               HorizontalAlignment="Center" Margin="0,0,0,6"
+                                               RenderOptions.BitmapScalingMode="HighQuality"/>
+                                        <TextBlock Text="VR" FontSize="14" FontWeight="SemiBold"
+                                                   HorizontalAlignment="Center"
+                                                   Foreground="{StaticResource TextBrush}"/>
+                                        <TextBlock Text="Left Stick Y" FontSize="11"
+                                                   HorizontalAlignment="Center"
+                                                   Foreground="{StaticResource SubTextBrush}"
+                                                   Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+
+                            <!-- Gamepad status message -->
+                            <TextBlock Text="{Binding GamepadStatusMessage}"
+                                       Foreground="{StaticResource YellowBrush}" FontSize="11"
+                                       Margin="0,10,0,0" TextWrapping="Wrap"
+                                       Visibility="{Binding GamepadStatusMessage, Converter={StaticResource StringToVis}}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ═══ VR OPENXR LAYER SECTION ═══ -->
+                    <Border Style="{StaticResource CardBorder}"
+                            Visibility="{Binding IsVRMode, Converter={StaticResource BoolToVis}}">
+                        <StackPanel>
+                            <TextBlock Text="OPENXR LAYER" Style="{StaticResource SectionHeader}"/>
+                            <TextBlock Text="Directly injects treadmill velocity into the VR left thumbstick via an OpenXR API layer. Works with VDXR, SteamVR, and other OpenXR runtimes."
+                                       Foreground="{StaticResource SubTextBrush}" FontSize="11"
+                                       TextWrapping="Wrap" Margin="0,0,0,12"/>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                                <Ellipse Width="8" Height="8" Margin="0,0,8,0"
+                                         VerticalAlignment="Center"
+                                         Fill="{Binding IsVRLayerInstalled, Converter={StaticResource BoolToStatusColor}}"/>
+                                <TextBlock Text="{Binding VRLayerStatusText}"
+                                           Foreground="{StaticResource TextBrush}" FontSize="12"/>
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                <Button Content="{Binding VRLayerButtonText}"
+                                        Command="{Binding ToggleVRLayerCommand}"
+                                        Padding="16,8" MinWidth="140"
+                                        FontSize="12" FontWeight="SemiBold"
+                                        Foreground="White" Cursor="Hand"
+                                        BorderThickness="0" Background="{StaticResource AccentBrush}">
+                                    <Button.Resources>
+                                        <Style TargetType="Border">
+                                            <Setter Property="CornerRadius" Value="6"/>
+                                        </Style>
+                                    </Button.Resources>
+                                </Button>
+                            </StackPanel>
+
+                            <TextBlock Text="{Binding VRLayerMessage}"
+                                       Foreground="{StaticResource YellowBrush}" FontSize="11"
+                                       Margin="0,10,0,0" TextWrapping="Wrap"
+                                       Visibility="{Binding VRLayerMessage, Converter={StaticResource StringToVis}}"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ═══ SETTINGS SECTION ═══ -->
+                    <Border Style="{StaticResource CardBorder}">
+                        <StackPanel>
+                            <TextBlock Text="SETTINGS" Style="{StaticResource SectionHeader}"/>
+
+                            <!-- Sensitivity -->
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="110"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="50"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Sensitivity"
+                                           Foreground="{StaticResource TextBrush}" FontSize="13"
+                                           VerticalAlignment="Center"/>
+                                <Slider Grid.Column="1" Style="{StaticResource ModernSlider}"
+                                        Minimum="0.1" Maximum="10" TickFrequency="0.1"
+                                        Value="{Binding Sensitivity, Mode=TwoWay}"
+                                        VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="2"
+                                           Text="{Binding Sensitivity, StringFormat={}{0:F1}}"
+                                           Foreground="{StaticResource AccentBrush}" FontSize="13"
+                                           HorizontalAlignment="Right" VerticalAlignment="Center"
+                                           FontWeight="SemiBold"/>
+                            </Grid>
+
+                            <!-- Dead Zone -->
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="110"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="50"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Dead Zone"
+                                           Foreground="{StaticResource TextBrush}" FontSize="13"
+                                           VerticalAlignment="Center"/>
+                                <Slider Grid.Column="1" Style="{StaticResource ModernSlider}"
+                                        Minimum="0" Maximum="50" TickFrequency="1"
+                                        Value="{Binding DeadZone, Mode=TwoWay}"
+                                        VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="2"
+                                           Text="{Binding DeadZone, StringFormat={}{0:F0}}"
+                                           Foreground="{StaticResource AccentBrush}" FontSize="13"
+                                           HorizontalAlignment="Right" VerticalAlignment="Center"
+                                           FontWeight="SemiBold"/>
+                            </Grid>
+
+                            <!-- Smoothing -->
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="110"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="50"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Smoothing"
+                                           Foreground="{StaticResource TextBrush}" FontSize="13"
+                                           VerticalAlignment="Center"/>
+                                <Slider Grid.Column="1" Style="{StaticResource ModernSlider}"
+                                        Minimum="0.05" Maximum="1.0" TickFrequency="0.05"
+                                        Value="{Binding SmoothingValue, Mode=TwoWay}"
+                                        VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="2"
+                                           Text="{Binding SmoothingValue, StringFormat={}{0:F2}}"
+                                           Foreground="{StaticResource AccentBrush}" FontSize="13"
+                                           HorizontalAlignment="Right" VerticalAlignment="Center"
+                                           FontWeight="SemiBold"/>
+                            </Grid>
+
+                            <!-- Max Speed -->
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="110"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="50"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" Text="Max Speed"
+                                           Foreground="{StaticResource TextBrush}" FontSize="13"
+                                           VerticalAlignment="Center"/>
+                                <Slider Grid.Column="1" Style="{StaticResource ModernSlider}"
+                                        Minimum="10" Maximum="200" TickFrequency="5"
+                                        Value="{Binding MaxSpeed, Mode=TwoWay}"
+                                        VerticalAlignment="Center"/>
+                                <TextBlock Grid.Column="2"
+                                           Text="{Binding MaxSpeed, StringFormat={}{0:F0}}"
+                                           Foreground="{StaticResource AccentBrush}" FontSize="13"
+                                           HorizontalAlignment="Right" VerticalAlignment="Center"
+                                           FontWeight="SemiBold"/>
+                            </Grid>
+
+                            <!-- Invert Direction -->
+                            <CheckBox Style="{StaticResource ModernCheckBox}"
+                                      Content="Invert Direction"
+                                      IsChecked="{Binding InvertDirection, Mode=TwoWay}"
+                                      Margin="0,4,0,0"/>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- ═══ LIVE MONITOR SECTION ═══ -->
+                    <Border Style="{StaticResource CardBorder}">
+                        <StackPanel>
+                            <TextBlock Text="LIVE MONITOR" Style="{StaticResource SectionHeader}"/>
+
+                            <Grid Height="170">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Visual Bar -->
+                                <Grid Grid.Column="0" HorizontalAlignment="Center" Width="60">
+                                    <!-- Center line -->
+                                    <Border Height="2" Background="{StaticResource Overlay0Brush}"
+                                            VerticalAlignment="Center"/>
+
+                                    <!-- Forward bar (grows upward from center) -->
+                                    <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                                            Width="40" CornerRadius="4,4,0,0">
+                                        <Border.RenderTransform>
+                                            <TranslateTransform Y="0"/>
+                                        </Border.RenderTransform>
+                                        <Border Background="#34D399" CornerRadius="4,4,0,0"
+                                                Width="40"
+                                                Height="{Binding ForwardBarHeight}"
+                                                VerticalAlignment="Bottom">
+                                            <Border.RenderTransform>
+                                                <TranslateTransform>
+                                                    <TranslateTransform.Y>
+                                                        <Binding Path="ForwardBarHeight">
+                                                            <Binding.Converter>
+                                                                <conv:NegateConverter/>
+                                                            </Binding.Converter>
+                                                        </Binding>
+                                                    </TranslateTransform.Y>
+                                                </TranslateTransform>
+                                            </Border.RenderTransform>
+                                        </Border>
+                                    </Border>
+
+                                    <!-- Backward bar (grows downward from center) -->
+                                    <Border VerticalAlignment="Center" HorizontalAlignment="Center"
+                                            Width="40" CornerRadius="0,0,4,4">
+                                        <Border Background="#F87171" CornerRadius="0,0,4,4"
+                                                Width="40"
+                                                Height="{Binding BackwardBarHeight}"
+                                                VerticalAlignment="Top"/>
+                                    </Border>
+
+                                    <!-- Labels -->
+                                    <TextBlock Text="▲" FontSize="16" HorizontalAlignment="Center"
+                                               VerticalAlignment="Top" Foreground="{StaticResource GreenBrush}"/>
+                                    <TextBlock Text="▼" FontSize="16" HorizontalAlignment="Center"
+                                               VerticalAlignment="Bottom" Foreground="{StaticResource RedBrush}"/>
+                                </Grid>
+
+                                <!-- Info panel -->
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="30,0,0,0"
+                                            MinWidth="200">
+                                    <TextBlock Text="{Binding DirectionText}" FontSize="20"
+                                               FontWeight="Bold" Margin="0,0,0,8">
+                                        <TextBlock.Foreground>
+                                            <Binding Path="CurrentVelocity" Converter="{StaticResource VelocityToColor}"/>
+                                        </TextBlock.Foreground>
+                                    </TextBlock>
+
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                        <TextBlock Text="Speed: " Foreground="{StaticResource SubTextBrush}"
+                                                   FontSize="14"/>
+                                        <TextBlock Text="{Binding VelocityDisplayText}" FontSize="14"
+                                                   FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"/>
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                        <TextBlock Text="Mode: " Foreground="{StaticResource SubTextBrush}"
+                                                   FontSize="12"/>
+                                        <TextBlock Text="{Binding OutputModeStatusText}" FontSize="12"
+                                                   Foreground="{StaticResource AccentBrush}"/>
+                                    </StackPanel>
+
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="Raw Value: " Foreground="{StaticResource SubTextBrush}"
+                                                   FontSize="11"/>
+                                        <TextBlock Text="{Binding CurrentVelocity, StringFormat={}{0:F3}}"
+                                                   FontSize="11" Foreground="{StaticResource Overlay0Brush}"
+                                                   FontFamily="Consolas"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- ═══ STATUS BAR ═══ -->
+            <Border Grid.Row="2" Background="{StaticResource BaseBgBrush}"
+                    Padding="16,8"
+                    BorderBrush="#2A2A38" BorderThickness="0,1,0,0">
+                <TextBlock Text="{Binding StatusMessage}"
+                           Foreground="{StaticResource SubTextBrush}" FontSize="11"/>
+            </Border>
+        </Grid>
+    </Border>
+</Window>
+

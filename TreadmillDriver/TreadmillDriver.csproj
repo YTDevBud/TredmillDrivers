@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TreadmillDriver</RootNamespace>
+    <AssemblyName>TreadmillDriver</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Nefarius.ViGEm.Client" Version="1.21.256" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="..\Icons\Controller.png" Link="Icons\Controller.png" />
+    <Resource Include="..\Icons\Mouse.png" Link="Icons\Mouse.png" />
+    <Resource Include="..\Icons\VR.png" Link="Icons\VR.png" />
+  </ItemGroup>
+
+</Project>
