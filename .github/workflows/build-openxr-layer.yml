@@ -36,16 +36,10 @@ jobs:
           if %ERRORLEVEL% NEQ 0 exit /b 1
           echo Build succeeded
 
-      - name: Copy manifest
-        shell: cmd
-        working-directory: OpenXRLayer
-        run: copy treadmill_layer.json bin\treadmill_layer.json
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: treadmill-openxr-layer
           path: |
             OpenXRLayer/bin/treadmill_layer.dll
-            OpenXRLayer/bin/treadmill_layer.json
           if-no-files-found: error
