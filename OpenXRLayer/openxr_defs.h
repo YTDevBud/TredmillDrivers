@@ -200,13 +200,14 @@ typedef struct XrApiLayerNextInfo {
     struct XrApiLayerNextInfo*      next;
 } XrApiLayerNextInfo;
 
+#define XR_API_LAYER_MAX_SETTINGS_PATH_SIZE 512
+
 typedef struct XrApiLayerCreateInfo {
     XrLoaderInterfaceStructs    structType;
     uint32_t                    structVersion;
     size_t                      structSize;
     void*                       loaderInstance;
-    char                        nextInfoName[XR_MAX_API_LAYER_NAME_SIZE];
-    PFN_xrGetInstanceProcAddr   nextGetInstanceProcAddr;
+    char                        settings_file_location[XR_API_LAYER_MAX_SETTINGS_PATH_SIZE];
     XrApiLayerNextInfo*         nextInfo;
 } XrApiLayerCreateInfo;
 
