@@ -32,7 +32,11 @@ static void LogOpen()
     if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, path))) {
         strcat_s(path, "\\TreadmillDriver\\OpenXRLayer\\layer_log.txt");
         g_logFile = CreateFileA(path, GENERIC_WRITE, FILE_SHARE_READ,
-                                NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                                NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        // Seek to end to append
+        if (g_logFile != INVALID_HANDLE_VALUE) {
+            SetFilePointer(g_logFile, 0, NULL, FILE_END);
+        }
     }
 }
 
@@ -511,7 +515,25 @@ xrNegotiateLoaderApiLayerInterface(
     XrNegotiateApiLayerRequest*      apiLayerRequest)
 {
     LogOpen();
+    Log("═══════════════════════════════════════════════════════");
     Log("=== Treadmill OpenXR Layer loaded ===");
+
+    // Log process name for identification
+    {
+        char exePath[MAX_PATH] = {0};
+        DWORD len = GetModuleFileNameA(NULL, exePath, MAX_PATH);
+        if (len > 0) {
+            char buf[MAX_PATH + 32];
+            sprintf_s(buf, "  Process: %s", exePath);
+            Log(buf);
+        }
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        char timeBuf[64];
+        sprintf_s(timeBuf, "  Time: %04d-%02d-%02d %02d:%02d:%02d",
+                  st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+        Log(timeBuf);
+    }
 
     if (!loaderInfo || !layerName || !apiLayerRequest) {
         Log("ERROR: null parameter");
