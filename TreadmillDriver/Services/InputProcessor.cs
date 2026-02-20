@@ -93,30 +93,35 @@ public class InputProcessor : IDisposable
             _accumulatedDeltaY = 0;
         }
 
-        // Apply inversion (mouse Y: negative = move forward on surface)
-        // Default: negative deltaY means treadmill forward = positive velocity
+        // Apply direction inversion
+        // Default: negative mouse deltaY = treadmill moving forward = positive velocity
         double direction = InvertDirection ? 1.0 : -1.0;
-        double scaledDelta = rawDelta * direction * Sensitivity;
+        rawDelta *= direction;
 
-        // Exponential moving average smoothing
-        double smoothingFactor = Math.Clamp(Smoothing, 0.05, 1.0);
-        _smoothedVelocity = _smoothedVelocity * (1.0 - smoothingFactor) + scaledDelta * smoothingFactor;
+        // Convert raw delta to a target velocity in [-1, 1] range IMMEDIATELY.
+        // Sensitivity controls how many raw units per tick reach 100%.
+        // At default Sensitivity=2.0, ~50 raw units/tick = 100%.
+        double targetVelocity = Math.Clamp(rawDelta * Sensitivity / 100.0, -1.0, 1.0);
 
-        // Apply dead zone
-        if (Math.Abs(_smoothedVelocity) < DeadZone)
+        // Exponential moving average smoothing — operates in normalized [-1, 1] space
+        // so the value can NEVER accumulate above 1.0 (fixes the "stuck at 100%" bug)
+        double alpha = Math.Clamp(Smoothing, 0.05, 1.0);
+        _smoothedVelocity = _smoothedVelocity * (1.0 - alpha) + targetVelocity * alpha;
+
+        // Apply dead zone (as percentage of full range → 0.0 to 0.5 normalized)
+        double deadZoneNorm = DeadZone / 100.0;
+        if (Math.Abs(_smoothedVelocity) < deadZoneNorm)
         {
-            // Decay towards zero when in dead zone
-            _smoothedVelocity *= 0.8;
-            if (Math.Abs(_smoothedVelocity) < 0.5)
+            _smoothedVelocity *= 0.5; // Fast decay within dead zone
+            if (Math.Abs(_smoothedVelocity) < 0.005)
                 _smoothedVelocity = 0;
         }
 
-        // Normalize to -1.0 to 1.0 range
-        // Assume a "reasonable max" raw speed of ~200 units per tick at sensitivity 1
-        double maxRawSpeed = 100.0 * (MaxSpeed / 100.0);
-        double normalizedVelocity = Math.Clamp(_smoothedVelocity / maxRawSpeed, -1.0, 1.0);
+        // Apply max speed cap
+        double maxSpeedNorm = MaxSpeed / 100.0;
+        double output = Math.Clamp(_smoothedVelocity, -maxSpeedNorm, maxSpeedNorm);
 
-        VelocityUpdated?.Invoke(normalizedVelocity);
+        VelocityUpdated?.Invoke(output);
     }
 
     // ─── Dispose ─────────────────────────────────────────────────────

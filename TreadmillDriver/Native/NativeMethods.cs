@@ -182,9 +182,49 @@ internal static class NativeMethods
 
     public const int WH_MOUSE_LL = 14;
     public const int WM_MOUSEMOVE = 0x0200;
-    public const uint MOUSEEVENTF_MOVE = 0x0001;
+    public const uint MOUSEEVENTF_MOVE       = 0x0001;
+    public const uint MOUSEEVENTF_LEFTDOWN   = 0x0002;
+    public const uint MOUSEEVENTF_LEFTUP     = 0x0004;
+    public const uint MOUSEEVENTF_RIGHTDOWN  = 0x0008;
+    public const uint MOUSEEVENTF_RIGHTUP    = 0x0010;
+    public const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
+    public const uint MOUSEEVENTF_MIDDLEUP   = 0x0040;
+    public const uint MOUSEEVENTF_XDOWN      = 0x0080;
+    public const uint MOUSEEVENTF_XUP        = 0x0100;
+    public const uint MOUSEEVENTF_WHEEL      = 0x0800;
+    public const uint MOUSEEVENTF_HWHEEL     = 0x1000;
 
-    /// <summary>Magic value we stamp on re-injected mouse moves so the hook lets them through.</summary>
+    // Raw Input mouse button flags
+    public const ushort RI_MOUSE_LEFT_BUTTON_DOWN   = 0x0001;
+    public const ushort RI_MOUSE_LEFT_BUTTON_UP     = 0x0002;
+    public const ushort RI_MOUSE_RIGHT_BUTTON_DOWN  = 0x0004;
+    public const ushort RI_MOUSE_RIGHT_BUTTON_UP    = 0x0008;
+    public const ushort RI_MOUSE_MIDDLE_BUTTON_DOWN = 0x0010;
+    public const ushort RI_MOUSE_MIDDLE_BUTTON_UP   = 0x0020;
+    public const ushort RI_MOUSE_BUTTON_4_DOWN      = 0x0040;
+    public const ushort RI_MOUSE_BUTTON_4_UP        = 0x0080;
+    public const ushort RI_MOUSE_BUTTON_5_DOWN      = 0x0100;
+    public const ushort RI_MOUSE_BUTTON_5_UP        = 0x0200;
+    public const ushort RI_MOUSE_WHEEL              = 0x0400;
+    public const ushort RI_MOUSE_HWHEEL             = 0x0800;
+
+    // XButton identifiers for mouseData
+    public const uint XBUTTON1 = 0x0001;
+    public const uint XBUTTON2 = 0x0002;
+
+    // Button WM_ messages for LL hook
+    public const int WM_LBUTTONDOWN  = 0x0201;
+    public const int WM_LBUTTONUP    = 0x0202;
+    public const int WM_RBUTTONDOWN  = 0x0204;
+    public const int WM_RBUTTONUP    = 0x0205;
+    public const int WM_MBUTTONDOWN  = 0x0207;
+    public const int WM_MBUTTONUP    = 0x0208;
+    public const int WM_MOUSEWHEEL   = 0x020A;
+    public const int WM_XBUTTONDOWN  = 0x020B;
+    public const int WM_XBUTTONUP    = 0x020C;
+    public const int WM_MOUSEHWHEEL  = 0x020E;
+
+    /// <summary>Magic value we stamp on re-injected mouse events so the hook lets them through.</summary>
     public static readonly IntPtr REINJECT_MAGIC = new(0x54524541); // "TREA"
 
     public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);

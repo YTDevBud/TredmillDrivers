@@ -5,7 +5,7 @@
 // into the left thumbstick Y axis. Reads velocity from a named
 // memory-mapped file written by the WPF companion app.
 //
-// Pure C + Win32 — no STL, no static constructors. v3
+// Pure C + Win32 — no STL, no static constructors. v4 — improved compatibility
 // ═══════════════════════════════════════════════════════════════════
 
 #include "openxr_defs.h"
@@ -74,7 +74,9 @@ struct TrackedActions {
     int         vec2fCount;
     uintptr_t   floatY[MAX_TRACKED_ACTIONS];
     int         floatYCount;
-    BOOL        bindingsReceived;
+    BOOL        suggestCalled;          // xrSuggestInteractionProfileBindings was called at least once
+    BOOL        relevantBindingsFound;  // we found at least one left-hand 2D input binding
+    int         suggestCallCount;       // how many times suggest was called
 };
 
 // ─── Global State (all POD — no static constructors) ────────────
@@ -170,6 +172,18 @@ TreadmillLayer_xrSuggestInteractionProfileBindings(
 {
     Log("xrSuggestInteractionProfileBindings called");
 
+    // Log the interaction profile path
+    if (g_xrPathToString) {
+        char profileStr[256] = {0};
+        uint32_t profileLen = 0;
+        if (XR_SUCCEEDED(g_xrPathToString(instance, suggestedBindings->interactionProfile,
+                                           sizeof(profileStr), &profileLen, profileStr))) {
+            char logBuf[320];
+            sprintf_s(logBuf, "  Interaction profile: %s", profileStr);
+            Log(logBuf);
+        }
+    }
+
     XrResult result = g_xrSuggestInteractionProfileBindings(instance, suggestedBindings);
     if (XR_FAILED(result)) {
         Log("  -> chained call FAILED");
@@ -183,6 +197,14 @@ TreadmillLayer_xrSuggestInteractionProfileBindings(
 
     EnterCriticalSection(&g_cs);
 
+    g_tracked.suggestCalled = TRUE;
+    g_tracked.suggestCallCount++;
+
+    char countBuf[64];
+    sprintf_s(countBuf, "  Scanning %u bindings (call #%d)...",
+              suggestedBindings->countSuggestedBindings, g_tracked.suggestCallCount);
+    Log(countBuf);
+
     for (uint32_t i = 0; i < suggestedBindings->countSuggestedBindings; i++) {
         char pathStr[256] = {0};
         uint32_t pathLen = 0;
@@ -193,27 +215,67 @@ TreadmillLayer_xrSuggestInteractionProfileBindings(
 
         if (XR_FAILED(pr) || pathLen == 0) continue;
 
-        BOOL isLeft       = strstr(pathStr, "/user/hand/left") != NULL;
-        BOOL isThumbstick = strstr(pathStr, "thumbstick")      != NULL;
+        BOOL isLeft = strstr(pathStr, "/user/hand/left") != NULL;
 
-        if (isLeft && isThumbstick) {
+        // Match thumbstick, trackpad, joystick — covers all major controller types
+        BOOL is2DInput = strstr(pathStr, "thumbstick") != NULL
+                      || strstr(pathStr, "trackpad")   != NULL
+                      || strstr(pathStr, "joystick")   != NULL;
+
+        if (isLeft && is2DInput) {
             uintptr_t key = (uintptr_t)suggestedBindings->suggestedBindings[i].action;
 
             char logBuf[320];
-            sprintf_s(logBuf, "  Tracked binding: %s (action=%p)", pathStr, (void*)key);
+            sprintf_s(logBuf, "  TRACKED binding: %s (action=%p)", pathStr, (void*)key);
             Log(logBuf);
 
-            if (strstr(pathStr, "thumbstick/y")) {
+            if (strstr(pathStr, "/y")) {
                 AddAction(g_tracked.floatY, &g_tracked.floatYCount, key);
-            } else if (!strstr(pathStr, "thumbstick/x")) {
+            } else if (!strstr(pathStr, "/x")) {
+                // It's the Vec2f binding (not decomposed into /x or /y)
                 AddAction(g_tracked.vec2f, &g_tracked.vec2fCount, key);
             }
-            g_tracked.bindingsReceived = TRUE;
+            g_tracked.relevantBindingsFound = TRUE;
+        } else if (isLeft) {
+            // Log other left-hand bindings for diagnostics
+            char logBuf[320];
+            sprintf_s(logBuf, "  left-hand (not 2D input): %s", pathStr);
+            Log(logBuf);
         }
     }
 
+    char summaryBuf[128];
+    sprintf_s(summaryBuf, "  Tracking summary: %d vec2f, %d floatY, relevant=%s",
+              g_tracked.vec2fCount, g_tracked.floatYCount,
+              g_tracked.relevantBindingsFound ? "YES" : "NO");
+    Log(summaryBuf);
+
     LeaveCriticalSection(&g_cs);
     return result;
+}
+
+// ─── Injection Logging (throttled — once per second max) ────────
+
+static ULONGLONG g_lastInjectLogTime  = 0;
+static int       g_injectCount        = 0;
+static int       g_skipCount          = 0;
+
+static void LogInjectionThrottled(BOOL injected, const char* reason)
+{
+    if (injected) g_injectCount++; else g_skipCount++;
+
+    ULONGLONG now = GetTickCount64();
+    if (now - g_lastInjectLogTime >= 2000) {
+        g_lastInjectLogTime = now;
+        if (g_injectCount > 0 || g_skipCount > 0) {
+            char buf[128];
+            sprintf_s(buf, "  [inject] %d injected, %d skipped in last 2s (%s)",
+                      g_injectCount, g_skipCount, reason);
+            Log(buf);
+            g_injectCount = 0;
+            g_skipCount = 0;
+        }
+    }
 }
 
 // ─── Intercepted: xrGetActionStateVector2f ──────────────────────
@@ -235,16 +297,26 @@ TreadmillLayer_xrGetActionStateVector2f(
     if (velocity == 0.0f) return result;
 
     BOOL shouldInject = FALSE;
+    const char* reason = "none";
     EnterCriticalSection(&g_cs);
     {
         uintptr_t key = (uintptr_t)getInfo->action;
         if (ContainsAction(g_tracked.vec2f, g_tracked.vec2fCount, key)) {
             shouldInject = TRUE;
-        } else if (!g_tracked.bindingsReceived) {
-            shouldInject = TRUE;   // fallback: inject all left-hand
+            reason = "tracked-vec2f";
+        } else if (!g_tracked.suggestCalled) {
+            // No suggest call yet — inject into all left-hand Vec2f
+            shouldInject = TRUE;
+            reason = "no-suggest-yet";
+        } else if (!g_tracked.relevantBindingsFound) {
+            // Suggest was called but no 2D input bindings found — aggressive fallback
+            shouldInject = TRUE;
+            reason = "no-relevant-bindings";
         }
     }
     LeaveCriticalSection(&g_cs);
+
+    LogInjectionThrottled(shouldInject, reason);
 
     if (shouldInject) {
         state->currentState.y += velocity;
@@ -279,7 +351,13 @@ TreadmillLayer_xrGetActionStateFloat(
     EnterCriticalSection(&g_cs);
     {
         uintptr_t key = (uintptr_t)getInfo->action;
-        shouldInject = ContainsAction(g_tracked.floatY, g_tracked.floatYCount, key);
+        if (ContainsAction(g_tracked.floatY, g_tracked.floatYCount, key)) {
+            shouldInject = TRUE;
+        }
+        // Float fallback: if suggest was called but no relevant bindings found,
+        // some games might decompose thumbstick into individual float axes.
+        // We can't reliably distinguish Y from X here without tracking action names,
+        // so only inject for explicitly tracked floatY actions.
     }
     LeaveCriticalSection(&g_cs);
 

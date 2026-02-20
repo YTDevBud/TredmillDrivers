@@ -19,6 +19,8 @@ public class MouseCaptureService : IDisposable
     private HwndSource? _hwndSource;
     private bool _isCapturing;
     private bool _disposed;
+    private IntPtr _hookHandle = IntPtr.Zero;
+    private NativeMethods.LowLevelMouseProc? _hookDelegate;
 
     /// <summary>Fires when mouse movement is detected from the target device. Provides delta X, Y.</summary>
     public event Action<int, int>? MouseMoved;
@@ -188,6 +190,14 @@ public class MouseCaptureService : IDisposable
         _hwndSource.AddHook(WndProc);
         _isCapturing = true;
 
+        // Install low-level mouse hook to block target device button/wheel events
+        _hookDelegate = MouseHookCallback;
+        _hookHandle = NativeMethods.SetWindowsHookEx(
+            NativeMethods.WH_MOUSE_LL,
+            _hookDelegate,
+            NativeMethods.GetModuleHandle(null),
+            0);
+
         return true;
     }
 
@@ -197,6 +207,14 @@ public class MouseCaptureService : IDisposable
     public void StopCapture()
     {
         if (!_isCapturing) return;
+
+        // Remove low-level mouse hook
+        if (_hookHandle != IntPtr.Zero)
+        {
+            NativeMethods.UnhookWindowsHookEx(_hookHandle);
+            _hookHandle = IntPtr.Zero;
+            _hookDelegate = null;
+        }
 
         _hwndSource?.RemoveHook(WndProc);
 
@@ -252,6 +270,93 @@ public class MouseCaptureService : IDisposable
         NativeMethods.SendInput(1, inputs, Marshal.SizeOf<NativeMethods.INPUT>());
     }
 
+    // ─── Low-Level Mouse Hook ────────────────────────────────────────
+
+    /// <summary>
+    /// LL hook callback: when BlockCursor is enabled, eats all button/wheel events
+    /// that don't carry our magic stamp. Non-target device buttons are re-injected
+    /// from ProcessRawInput. Target device buttons are silently dropped.
+    /// Movement (WM_MOUSEMOVE) always passes through — counter-injection handles it.
+    /// </summary>
+    private IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
+    {
+        if (nCode >= 0 && BlockCursor && _isCapturing)
+        {
+            int msg = wParam.ToInt32();
+
+            // Let movement through (counter-injection handles it separately)
+            if (msg != NativeMethods.WM_MOUSEMOVE)
+            {
+                // For button/wheel events, check if it's our re-injection
+                var hookStruct = Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
+                if (hookStruct.dwExtraInfo != NativeMethods.REINJECT_MAGIC)
+                {
+                    // Eat it — will be re-injected for non-target devices via Raw Input
+                    return (IntPtr)1;
+                }
+            }
+        }
+
+        return NativeMethods.CallNextHookEx(_hookHandle, (IntPtr)nCode, wParam, lParam);
+    }
+
+    /// <summary>
+    /// Re-inject button/wheel events from a non-target device with our magic stamp,
+    /// so the LL hook passes them through on the second time around.
+    /// </summary>
+    private static void ReInjectButtons(ushort buttonFlags, short wheelDelta)
+    {
+        // Standard buttons (left, right, middle) — can be combined in one SendInput call
+        uint flags = 0;
+        if ((buttonFlags & NativeMethods.RI_MOUSE_LEFT_BUTTON_DOWN) != 0)   flags |= NativeMethods.MOUSEEVENTF_LEFTDOWN;
+        if ((buttonFlags & NativeMethods.RI_MOUSE_LEFT_BUTTON_UP) != 0)     flags |= NativeMethods.MOUSEEVENTF_LEFTUP;
+        if ((buttonFlags & NativeMethods.RI_MOUSE_RIGHT_BUTTON_DOWN) != 0)  flags |= NativeMethods.MOUSEEVENTF_RIGHTDOWN;
+        if ((buttonFlags & NativeMethods.RI_MOUSE_RIGHT_BUTTON_UP) != 0)    flags |= NativeMethods.MOUSEEVENTF_RIGHTUP;
+        if ((buttonFlags & NativeMethods.RI_MOUSE_MIDDLE_BUTTON_DOWN) != 0) flags |= NativeMethods.MOUSEEVENTF_MIDDLEDOWN;
+        if ((buttonFlags & NativeMethods.RI_MOUSE_MIDDLE_BUTTON_UP) != 0)   flags |= NativeMethods.MOUSEEVENTF_MIDDLEUP;
+        if (flags != 0)
+            SendButtonInput(flags, 0);
+
+        // Side buttons need separate calls (different mouseData per button)
+        if ((buttonFlags & NativeMethods.RI_MOUSE_BUTTON_4_DOWN) != 0)
+            SendButtonInput(NativeMethods.MOUSEEVENTF_XDOWN, NativeMethods.XBUTTON1);
+        if ((buttonFlags & NativeMethods.RI_MOUSE_BUTTON_4_UP) != 0)
+            SendButtonInput(NativeMethods.MOUSEEVENTF_XUP, NativeMethods.XBUTTON1);
+        if ((buttonFlags & NativeMethods.RI_MOUSE_BUTTON_5_DOWN) != 0)
+            SendButtonInput(NativeMethods.MOUSEEVENTF_XDOWN, NativeMethods.XBUTTON2);
+        if ((buttonFlags & NativeMethods.RI_MOUSE_BUTTON_5_UP) != 0)
+            SendButtonInput(NativeMethods.MOUSEEVENTF_XUP, NativeMethods.XBUTTON2);
+
+        // Wheel / horizontal wheel
+        if ((buttonFlags & NativeMethods.RI_MOUSE_WHEEL) != 0)
+            SendButtonInput(NativeMethods.MOUSEEVENTF_WHEEL, unchecked((uint)wheelDelta));
+        if ((buttonFlags & NativeMethods.RI_MOUSE_HWHEEL) != 0)
+            SendButtonInput(NativeMethods.MOUSEEVENTF_HWHEEL, unchecked((uint)wheelDelta));
+    }
+
+    private static void SendButtonInput(uint eventFlags, uint mouseData)
+    {
+        var inputs = new NativeMethods.INPUT[]
+        {
+            new()
+            {
+                type = NativeMethods.INPUT_MOUSE,
+                u = new NativeMethods.INPUT_UNION
+                {
+                    mi = new NativeMethods.MOUSEINPUT
+                    {
+                        dx = 0, dy = 0,
+                        mouseData = mouseData,
+                        dwFlags = eventFlags,
+                        time = 0,
+                        dwExtraInfo = NativeMethods.REINJECT_MAGIC
+                    }
+                }
+            }
+        };
+        NativeMethods.SendInput(1, inputs, Marshal.SizeOf<NativeMethods.INPUT>());
+    }
+
     // ─── Message Processing ──────────────────────────────────────────
 
     private IntPtr WndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -294,22 +399,22 @@ public class MouseCaptureService : IDisposable
             var mouseOffset = buffer + Marshal.SizeOf<NativeMethods.RAWINPUTHEADER>();
             var mouse = Marshal.PtrToStructure<NativeMethods.RAWMOUSE>(mouseOffset);
 
-            if (mouse.usFlags != NativeMethods.MOUSE_MOVE_RELATIVE)
-                return;
-
-            if (mouse.lLastX == 0 && mouse.lLastY == 0)
-                return;
-
             bool isTargetDevice = (_targetDeviceHandle != IntPtr.Zero && header.hDevice == _targetDeviceHandle);
 
-            if (isTargetDevice)
+            // ── Movement: consume target device deltas for treadmill processing ──
+            if (mouse.usFlags == NativeMethods.MOUSE_MOVE_RELATIVE &&
+                (mouse.lLastX != 0 || mouse.lLastY != 0) &&
+                isTargetDevice)
             {
-                // Target device: consume movement for treadmill processing
                 MouseMoved?.Invoke(mouse.lLastX, mouse.lLastY);
-
-                // If blocking, inject an opposite move to undo the cursor displacement
                 if (BlockCursor)
                     CounterInjectMove(mouse.lLastX, mouse.lLastY);
+            }
+
+            // ── Buttons: re-inject non-target device clicks (target's are dropped) ──
+            if (BlockCursor && mouse.usButtonFlags != 0 && !isTargetDevice)
+            {
+                ReInjectButtons(mouse.usButtonFlags, (short)mouse.usButtonData);
             }
         }
         finally
